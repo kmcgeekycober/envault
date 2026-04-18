@@ -51,15 +51,23 @@ export function encryptFile(inputPath: string, outputPath: string, recipients: s
     throw new Error("At least one recipient fingerprint is required.");
   }
   const recipientArgs = recipients.map((r) => `-r ${r}`).join(" ");
-  execSync(
-    `gpg --yes --output ${outputPath} --encrypt ${recipientArgs} ${inputPath}`,
-    { stdio: "inherit" }
-  );
+  try {
+    execSync(
+      `gpg --yes --output ${outputPath} --encrypt ${recipientArgs} ${inputPath}`,
+      { stdio: "inherit" }
+    );
+  } catch {
+    throw new Error(`Failed to encrypt file "${inputPath}". Ensure the recipient keys are trusted and available.`);
+  }
 }
 
 export function decryptFile(inputPath: string, outputPath: string): void {
-  execSync(
-    `gpg --yes --output ${outputPath} --decrypt ${inputPath}`,
-    { stdio: "inherit" }
-  );
+  try {
+    execSync(
+      `gpg --yes --output ${outputPath} --decrypt ${inputPath}`,
+      { stdio: "inherit" }
+    );
+  } catch {
+    throw new Error(`Failed to decrypt file "${inputPath}". Ensure you have the correct private key available.`);
+  }
 }
