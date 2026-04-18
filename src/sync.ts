@@ -64,3 +64,28 @@ export function getGitUser(): string {
     return 'unknown';
   }
 }
+
+/**
+ * Returns sync status without modifying any files.
+ * Compares local env file mtime against the pushed metadata timestamp.
+ */
+export function getSyncStatus(envFile: string = '.env'): SyncResult {
+  const encryptedFile = getEncryptedFilePath(envFile);
+  const metaFile = encryptedFile + '.meta';
+
+  if (!fs.existsSync(encryptedFile)) {
+    throw new Error(`Encrypted file not found: ${encryptedFile}`);
+  }
+
+  const meta = fs.existsSync(metaFile)
+    ? JSON.parse(fs.readFileSync(metaFile, 'utf-8'))
+    : { timestamp: 0 };
+
+  if (!fs.existsSync(envFile)) {
+    return { status: 'pulled', file: envFile, timestamp: meta.timestamp };
+  }
+
+  const localMtime = fs.statSync(envFile).mtimeMs;
+  const status = localMtime >= meta.timestamp ? 'up-to-date' : 'pulled';
+  return { status, file: envFile, timestamp: meta.timestamp };
+}
