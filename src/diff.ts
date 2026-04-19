@@ -56,3 +56,10 @@ export function formatDiff(diff: DiffResult): string {
   for (const e of diff.changed) lines.push(`~ ${e.key}: ${e.oldValue} -> ${e.newValue}`);
   return lines.length ? lines.join('\n') : '(no changes)';
 }
+
+/**
+ * Returns true if the diff contains no additions, removals, or changes.
+ */
+export function isDiffEmpty(diff: DiffResult): boolean {
+  return diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0;
+}
