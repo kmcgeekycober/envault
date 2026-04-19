@@ -46,6 +46,27 @@ export function resolveAlias(name: string, dir?: string): string | undefined {
   return aliases[name];
 }
 
+/**
+ * Resolves an alias chain, following aliases that point to other aliases.
+ * Throws if a cycle is detected.
+ */
+export function resolveAliasChain(name: string, dir?: string): string {
+  const aliases = loadAliases(dir);
+  const visited = new Set<string>();
+  let current = name;
+  while (current in aliases) {
+    if (visited.has(current)) {
+      throw new Error(`Alias cycle detected involving '${current}'`);
+    }
+    visited.add(current);
+    current = aliases[current];
+  }
+  if (current === name && !(name in aliases)) {
+    throw new Error(`Alias '${name}' not found`);
+  }
+  return current;
+}
+
 export function formatAliases(aliases: AliasMap): string {
   const entries = Object.entries(aliases);
   if (entries.length === 0) return 'No aliases defined.';
