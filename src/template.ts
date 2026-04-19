@@ -11,22 +11,29 @@ export function parseTemplate(content: string): EnvTemplate {
   const keys: string[] = [];
   const required: string[] = [];
   const descriptions: Record<string, string> = {};
+  let pendingDescription: string | null = null;
 
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#!')) continue;
 
     if (trimmed.startsWith('#')) {
-      const last = keys[keys.length - 1];
-      if (last) descriptions[last] = trimmed.slice(1).trim();
+      pendingDescription = trimmed.slice(1).trim();
       continue;
     }
 
     const match = trimmed.match(/^([A-Z0-9_]+)(=?)(.*)$/);
-    if (!match) continue;
+    if (!match) {
+      pendingDescription = null;
+      continue;
+    }
 
     const [, key, eq, val] = match;
     keys.push(key);
+    if (pendingDescription) {
+      descriptions[key] = pendingDescription;
+      pendingDescription = null;
+    }
     if (eq === '=' && val.trim() === '') required.push(key);
   }
 
