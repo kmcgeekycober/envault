@@ -1,60 +1,61 @@
-import * as fs from 'fs';
-import * as os from 'os';
+import * as fs from 'fs/promises';
 import * as path from 'path';
-import { acquireLock, releaseLock, readLock, getLockFilePath, formatLock } from './lock';
+import * as os from 'os';
+import { getLockFilePath, acquireLock, releaseLock, readLock, formatLock } from './lock';
 
-function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'envault-lock-'));
+async function makeTmpDir() {
+  return fs.mkdtemp(path.join(os.tmpdir(), 'envault-lock-'));
 }
 
 describe('lock', () => {
-  let dir: string;
-  let envFile: string;
+  let tmpDir: string;
 
-  beforeEach(() => {
-    dir = makeTmpDir();
-    envFile = path.join(dir, '.env');
-    fs.writeFileSync(envFile, 'KEY=value');
+  beforeEach(async () => {
+    tmpDir = await makeTmpDir();
+    jest.spyOn(process, 'cwd').mockReturnValue(tmpDir);
   });
 
-  afterEach(() => {
-    fs.rmSync(dir, { recursive: true });
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('acquires a lock successfully', () => {
-    const entry = acquireLock(envFile, 'alice');
-    expect(entry).not.toBeNull();
-    expect(entry?.user).toBe('alice');
-    expect(fs.existsSync(getLockFilePath(envFile))).toBe(true);
+  it('getLockFilePath returns path based on env file', () => {
+    const p = getLockFilePath('.env');
+    expect(p).toContain('.env.lock');
   });
 
-  it('returns null if lock already held', () => {
-    acquireLock(envFile, 'alice');
-    const second = acquireLock(envFile, 'bob');
-    expect(second).toBeNull();
+  it('acquireLock creates a lock file', async () => {
+    const entry = await acquireLock(path.join(tmpDir, '.env'), 'bob');
+    expect(entry.lockedBy).toBe('bob');
+    expect(entry.file).toContain('.env');
   });
 
-  it('releases a lock by the same user', () => {
-    acquireLock(envFile, 'alice');
-    const released = releaseLock(envFile, 'alice');
-    expect(released).toBe(true);
-    expect(fs.existsSync(getLockFilePath(envFile))).toBe(false);
+  it('readLock returns null when no lock exists', async () => {
+    const result = await readLock(path.join(tmpDir, '.env'));
+    expect(result).toBeNull();
   });
 
-  it('does not release lock owned by another user', () => {
-    acquireLock(envFile, 'alice');
-    const released = releaseLock(envFile, 'bob');
-    expect(released).toBe(false);
+  it('readLock returns entry after acquireLock', async () => {
+    const envFile = path.join(tmpDir, '.env');
+    await acquireLock(envFile, 'carol');
+    const result = await readLock(envFile);
+    expect(result).not.toBeNull();
+    expect(result?.lockedBy).toBe('carol');
   });
 
-  it('readLock returns null when no lock exists', () => {
-    expect(readLock(envFile)).toBeNull();
+  it('releaseLock removes the lock file', async () => {
+    const envFile = path.join(tmpDir, '.env');
+    await acquireLock(envFile, 'dave');
+    await releaseLock(envFile);
+    const result = await readLock(envFile);
+    expect(result).toBeNull();
   });
 
   it('formatLock returns a readable string', () => {
-    const entry = acquireLock(envFile, 'alice')!;
-    const msg = formatLock(entry);
-    expect(msg).toContain('alice');
-    expect(msg).toContain('PID');
+    const entry = { file: '.env', lockedBy: 'eve', lockedAt: '2024-01-01T00:00:00.000Z', pid: 42 };
+    const output = formatLock(entry);
+    expect(output).toContain('eve');
+    expect(output).toContain('.env');
   });
 });
