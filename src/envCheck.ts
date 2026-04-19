@@ -6,50 +6,45 @@ export interface EnvCheckResult {
   file: string;
   missing: string[];
   extra: string[];
-  ok: boolean;
-}
-
-export async function checkEnvAgainstTemplate(
-  envFile: string,
-  templateFile: string
-): Promise<EnvCheckResult> {
-  if (!fs.existsSync(envFile)) {
-    throw new Error(`Env file not found: ${envFile}`);
-  }
-  if (!fs.existsSync(templateFile)) {
-    throw new Error(`Template file not found: ${templateFile}`);
-  }
-
-  const envContent = fs.readFileSync(envFile, 'utf8');
-  const envKeys = new Set(Object.keys(parseEnvFile(envContent)));
-
-  const template = await loadTemplate(templateFile);
-  const templateKeys = new Set(template.keys.map((k) => k.name));
-
-  const missing = [...templateKeys].filter((k) => !envKeys.has(k));
-  const extra = [...envKeys].filter((k) => !templateKeys.has(k));
-
-  return {
-    file: envFile,
-    missing,
-    extra,
-    ok: missing.length === 0,
-  };
+  valid: boolean;
 }
 
 export function formatEnvCheckResult(result: EnvCheckResult): string {
   const lines: string[] = [];
-  if (result.ok && result.extra.length === 0) {
-    lines.push(`✔ ${result.file} matches template.`);
-    return lines.join('\n');
-  }
-  if (result.missing.length > 0) {
-    lines.push(`✖ Missing keys in ${result.file}:`);
-    result.missing.forEach((k) => lines.push(`  - ${k}`));
-  }
-  if (result.extra.length > 0) {
-    lines.push(`⚠ Extra keys not in template:`);
-    result.extra.forEach((k) => lines.push(`  + ${k}`));
+  lines.push(`File: ${result.file}`);
+  if (result.valid) {
+    lines.push('  ✓ All required keys present');
+  } else {
+    if (result.missing.length > 0) {
+      lines.push(`  ✗ Missing keys: ${result.missing.join(', ')}`);
+    }
+    if (result.extra.length > 0) {
+      lines.push(`  ! Extra keys: ${result.extra.join(', ')}`);
+    }
   }
   return lines.join('\n');
+}
+
+export async function checkEnvFile(
+  envPath: string,
+  templatePath: string
+): Promise<EnvCheckResult> {
+  const envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+  const envKeys = new Set(Object.keys(parseEnvFile(envContent)));
+
+  const template = await loadTemplate(templatePath);
+  const requiredKeys = new Set(
+    template.keys.filter((k) => k.required).map((k) => k.name)
+  );
+  const allTemplateKeys = new Set(template.keys.map((k) => k.name));
+
+  const missing = [...requiredKeys].filter((k) => !envKeys.has(k));
+  const extra = [...envKeys].filter((k) => !allTemplateKeys.has(k));
+
+  return {
+    file: envPath,
+    missing,
+    extra,
+    valid: missing.length === 0,
+  };
 }
