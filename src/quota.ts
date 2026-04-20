@@ -1,78 +1,75 @@
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from "fs";
+import * as path from "path";
 
 export interface QuotaConfig {
   maxKeys: number;
-  maxFileSizeBytes: number;
-  maxRecipients: number;
+  maxFileSize: number; // bytes
+  maxValueLength: number;
 }
 
-export interface QuotaCheckResult {
+export interface QuotaResult {
   passed: boolean;
+  keyCount: number;
+  fileSize: number;
+  maxValueLength: number;
   violations: string[];
 }
 
 const DEFAULT_QUOTA: QuotaConfig = {
   maxKeys: 100,
-  maxFileSizeBytes: 1024 * 1024, // 1MB
-  maxRecipients: 20,
+  maxFileSize: 1024 * 64, // 64KB
+  maxValueLength: 1024,
 };
 
-export function getQuotaConfigPath(vaultDir: string): string {
-  return path.join(vaultDir, 'quota.json');
+export function getQuotaConfigPath(dir: string): string {
+  return path.join(dir, ".envault", "quota.json");
 }
 
-export function loadQuotaConfig(vaultDir: string): QuotaConfig {
-  const p = getQuotaConfigPath(vaultDir);
+export function loadQuotaConfig(dir: string): QuotaConfig {
+  const p = getQuotaConfigPath(dir);
   if (!fs.existsSync(p)) return { ...DEFAULT_QUOTA };
-  try {
-    return { ...DEFAULT_QUOTA, ...JSON.parse(fs.readFileSync(p, 'utf-8')) };
-  } catch {
-    return { ...DEFAULT_QUOTA };
-  }
+  return { ...DEFAULT_QUOTA, ...JSON.parse(fs.readFileSync(p, "utf8")) };
 }
 
-export function saveQuotaConfig(vaultDir: string, config: QuotaConfig): void {
-  fs.writeFileSync(getQuotaConfigPath(vaultDir), JSON.stringify(config, null, 2));
+export function saveQuotaConfig(dir: string, config: QuotaConfig): void {
+  const p = getQuotaConfigPath(dir);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify(config, null, 2));
 }
 
-export function checkEnvQuota(
-  envFilePath: string,
-  recipients: string[],
-  quota: QuotaConfig
-): QuotaCheckResult {
+export function checkEnvQuota(envPath: string, config: QuotaConfig): QuotaResult {
   const violations: string[] = [];
-
-  if (!fs.existsSync(envFilePath)) {
-    return { passed: true, violations: [] };
+  if (!fs.existsSync(envPath)) {
+    return { passed: false, keyCount: 0, fileSize: 0, maxValueLength: 0, violations: ["File not found"] };
   }
-
-  const stat = fs.statSync(envFilePath);
-  if (stat.size > quota.maxFileSizeBytes) {
-    violations.push(
-      `File size ${stat.size} bytes exceeds limit of ${quota.maxFileSizeBytes} bytes`
-    );
+  const content = fs.readFileSync(envPath, "utf8");
+  const fileSize = Buffer.byteLength(content, "utf8");
+  const lines = content.split("\n").filter((l) => l.trim() && !l.trim().startsWith("#"));
+  const keyCount = lines.length;
+  let maxValueLength = 0;
+  for (const line of lines) {
+    const idx = line.indexOf("=");
+    if (idx !== -1) {
+      const val = line.slice(idx + 1);
+      if (val.length > maxValueLength) maxValueLength = val.length;
+      if (val.length > config.maxValueLength) {
+        const key = line.slice(0, idx);
+        violations.push(`Value for '${key}' exceeds max length (${val.length} > ${config.maxValueLength})`);
+      }
+    }
   }
-
-  const content = fs.readFileSync(envFilePath, 'utf-8');
-  const keyCount = content
-    .split('\n')
-    .filter((l) => l.trim() && !l.trim().startsWith('#') && l.includes('=')).length;
-
-  if (keyCount > quota.maxKeys) {
-    violations.push(`Key count ${keyCount} exceeds limit of ${quota.maxKeys}`);
-  }
-
-  if (recipients.length > quota.maxRecipients) {
-    violations.push(
-      `Recipient count ${recipients.length} exceeds limit of ${quota.maxRecipients}`
-    );
-  }
-
-  return { passed: violations.length === 0, violations };
+  if (keyCount > config.maxKeys) violations.push(`Too many keys (${keyCount} > ${config.maxKeys})`);
+  if (fileSize > config.maxFileSize) violations.push(`File too large (${fileSize} > ${config.maxFileSize} bytes)`);
+  return { passed: violations.length === 0, keyCount, fileSize, maxValueLength, violations };
 }
 
-export function formatQuotaResult(result: QuotaCheckResult): string {
-  if (result.passed) return '✔ Quota check passed.';
-  return ['✖ Quota check failed:', ...result.violations.map((v) => `  - ${v}`)].join('\n');
+export function formatQuotaResult(result: QuotaResult): string {
+  const lines = [
+    `Keys: ${result.keyCount}`,
+    `File size: ${result.fileSize} bytes`,
+    `Max value length: ${result.maxValueLength}`,
+    result.passed ? "✓ All quota checks passed" : "✗ Quota violations:",
+    ...result.violations.map((v) => `  - ${v}`),
+  ];
+  return lines.join("\n");
 }

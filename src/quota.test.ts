@@ -1,69 +1,75 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import {
+  getQuotaConfigPath,
   loadQuotaConfig,
   saveQuotaConfig,
   checkEnvQuota,
   formatQuotaResult,
-} from './quota';
+} from "./quota";
 
 function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'envault-quota-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "envault-quota-"));
 }
 
-describe('quota', () => {
-  it('loads defaults when no config file exists', () => {
-    const dir = makeTmpDir();
-    const cfg = loadQuotaConfig(dir);
-    expect(cfg.maxKeys).toBe(100);
-    expect(cfg.maxRecipients).toBe(20);
+describe("quota", () => {
+  let tmpDir: string;
+  beforeEach(() => { tmpDir = makeTmpDir(); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true }); });
+
+  it("getQuotaConfigPath returns correct path", () => {
+    expect(getQuotaConfigPath("/project")).toBe("/project/.envault/quota.json");
   });
 
-  it('saves and reloads config', () => {
-    const dir = makeTmpDir();
-    saveQuotaConfig(dir, { maxKeys: 50, maxFileSizeBytes: 512, maxRecipients: 5 });
-    const cfg = loadQuotaConfig(dir);
-    expect(cfg.maxKeys).toBe(50);
-    expect(cfg.maxRecipients).toBe(5);
+  it("loadQuotaConfig returns defaults when file missing", () => {
+    const config = loadQuotaConfig(tmpDir);
+    expect(config.maxKeys).toBe(100);
+    expect(config.maxFileSize).toBeGreaterThan(0);
   });
 
-  it('passes quota for valid file', () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, '.env');
-    fs.writeFileSync(envFile, 'FOO=bar\nBAZ=qux\n');
-    const result = checkEnvQuota(envFile, ['alice', 'bob'], { maxKeys: 10, maxFileSizeBytes: 1000, maxRecipients: 5 });
+  it("saveQuotaConfig and loadQuotaConfig round-trip", () => {
+    saveQuotaConfig(tmpDir, { maxKeys: 20, maxFileSize: 512, maxValueLength: 64 });
+    const config = loadQuotaConfig(tmpDir);
+    expect(config.maxKeys).toBe(20);
+    expect(config.maxFileSize).toBe(512);
+    expect(config.maxValueLength).toBe(64);
+  });
+
+  it("checkEnvQuota passes for valid file", () => {
+    const envPath = path.join(tmpDir, ".env");
+    fs.writeFileSync(envPath, "FOO=bar\nBAZ=qux\n");
+    const config = loadQuotaConfig(tmpDir);
+    const result = checkEnvQuota(envPath, config);
     expect(result.passed).toBe(true);
+    expect(result.keyCount).toBe(2);
     expect(result.violations).toHaveLength(0);
   });
 
-  it('detects too many keys', () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, '.env');
-    const lines = Array.from({ length: 5 }, (_, i) => `KEY${i}=val`).join('\n');
-    fs.writeFileSync(envFile, lines);
-    const result = checkEnvQuota(envFile, [], { maxKeys: 3, maxFileSizeBytes: 10000, maxRecipients: 5 });
+  it("checkEnvQuota detects too many keys", () => {
+    const envPath = path.join(tmpDir, ".env");
+    const lines = Array.from({ length: 5 }, (_, i) => `KEY${i}=val`).join("\n");
+    fs.writeFileSync(envPath, lines);
+    const result = checkEnvQuota(envPath, { maxKeys: 3, maxFileSize: 1024 * 64, maxValueLength: 1024 });
     expect(result.passed).toBe(false);
-    expect(result.violations.some((v) => v.includes('Key count'))).toBe(true);
+    expect(result.violations.some((v) => v.includes("Too many keys"))).toBe(true);
   });
 
-  it('detects too many recipients', () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, '.env');
-    fs.writeFileSync(envFile, 'A=1\n');
-    const recipients = ['a', 'b', 'c', 'd'];
-    const result = checkEnvQuota(envFile, recipients, { maxKeys: 100, maxFileSizeBytes: 10000, maxRecipients: 2 });
+  it("checkEnvQuota detects oversized value", () => {
+    const envPath = path.join(tmpDir, ".env");
+    fs.writeFileSync(envPath, `BIG=${'x'.repeat(200)}\n`);
+    const result = checkEnvQuota(envPath, { maxKeys: 100, maxFileSize: 1024 * 64, maxValueLength: 50 });
     expect(result.passed).toBe(false);
-    expect(result.violations.some((v) => v.includes('Recipient count'))).toBe(true);
+    expect(result.violations.some((v) => v.includes("BIG"))).toBe(true);
   });
 
-  it('formats passing result', () => {
-    expect(formatQuotaResult({ passed: true, violations: [] })).toContain('passed');
+  it("formatQuotaResult shows passed message", () => {
+    const r = { passed: true, keyCount: 2, fileSize: 30, maxValueLength: 5, violations: [] };
+    expect(formatQuotaResult(r)).toContain("passed");
   });
 
-  it('formats failing result', () => {
-    const out = formatQuotaResult({ passed: false, violations: ['Too many keys'] });
-    expect(out).toContain('failed');
-    expect(out).toContain('Too many keys');
+  it("formatQuotaResult lists violations", () => {
+    const r = { passed: false, keyCount: 200, fileSize: 30, maxValueLength: 5, violations: ["Too many keys"] };
+    expect(formatQuotaResult(r)).toContain("Too many keys");
   });
 });
