@@ -1,69 +1,84 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import {
   getCompressedPath,
-  compressFile,
-  decompressFile,
   getCompressedSize,
   formatCompressionResult,
-} from './compress';
+  compressFile,
+  decompressFile,
+  CompressionResult,
+} from "./compress";
 
 function makeTmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'envault-compress-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "envault-compress-"));
 }
 
-describe('getCompressedPath', () => {
-  it('appends .gz to the file path', () => {
-    expect(getCompressedPath('/tmp/test.env')).toBe('/tmp/test.env.gz');
+describe("getCompressedPath", () => {
+  it("appends .gz to the file path", () => {
+    expect(getCompressedPath("/tmp/test.env.gpg")).toBe("/tmp/test.env.gpg.gz");
   });
 });
 
-describe('compressFile / decompressFile', () => {
-  it('compresses a file and decompresses it back to original content', async () => {
+describe("getCompressedSize", () => {
+  it("returns 0 for non-existent file", () => {
+    expect(getCompressedSize("/nonexistent/file.txt")).toBe(0);
+  });
+
+  it("returns correct size for existing file", () => {
     const dir = makeTmpDir();
-    const original = path.join(dir, 'test.env');
-    const content = 'API_KEY=secret\nDB_URL=postgres://localhost/db\n';
-    fs.writeFileSync(original, content, 'utf8');
-
-    const compressed = await compressFile(original);
-    expect(fs.existsSync(compressed)).toBe(true);
-    expect(compressed).toBe(original + '.gz');
-
-    const restored = path.join(dir, 'restored.env');
-    await decompressFile(compressed, restored);
-    expect(fs.readFileSync(restored, 'utf8')).toBe(content);
-  });
-
-  it('throws when decompressing a non-.gz file', async () => {
-    await expect(decompressFile('/tmp/notgz.env')).rejects.toThrow('Expected a .gz file');
+    const file = path.join(dir, "test.txt");
+    fs.writeFileSync(file, "hello world");
+    expect(getCompressedSize(file)).toBe(11);
+    fs.rmSync(dir, { recursive: true });
   });
 });
 
-describe('getCompressedSize', () => {
-  it('returns 0 for a non-existent file', () => {
-    expect(getCompressedSize('/nonexistent/file.gz')).toBe(0);
+describe("formatCompressionResult", () => {
+  it("formats result with percentage saved", () => {
+    const result: CompressionResult = {
+      originalPath: "/tmp/a.env",
+      compressedPath: "/tmp/a.env.gz",
+      originalSize: 1000,
+      compressedSize: 400,
+      ratio: 0.4,
+    };
+    const output = formatCompressionResult(result);
+    expect(output).toContain("1000 bytes");
+    expect(output).toContain("400 bytes");
+    expect(output).toContain("60.0%");
   });
 
-  it('returns the file size for an existing file', () => {
+  it("handles zero original size gracefully", () => {
+    const result: CompressionResult = {
+      originalPath: "/tmp/empty.env",
+      compressedPath: "/tmp/empty.env.gz",
+      originalSize: 0,
+      compressedSize: 0,
+      ratio: 1,
+    };
+    const output = formatCompressionResult(result);
+    expect(output).toContain("0.0%");
+  });
+});
+
+describe("compressFile / decompressFile", () => {
+  it("round-trips a file through compress and decompress", async () => {
     const dir = makeTmpDir();
-    const file = path.join(dir, 'sample.gz');
-    fs.writeFileSync(file, Buffer.from([0x1f, 0x8b]));
-    expect(getCompressedSize(file)).toBe(2);
-  });
-});
+    const file = path.join(dir, "test.env.gpg");
+    const content = "API_KEY=secret123\nDB_URL=postgres://localhost/db\n";
+    fs.writeFileSync(file, content);
 
-describe('formatCompressionResult', () => {
-  it('formats the compression result correctly', () => {
-    const result = formatCompressionResult(1000, 400, '/tmp/test.env.gz');
-    expect(result).toContain('test.env.gz');
-    expect(result).toContain('1000 bytes');
-    expect(result).toContain('400 bytes');
-    expect(result).toContain('60.0% reduction');
-  });
+    const result = await compressFile(file);
+    expect(fs.existsSync(result.compressedPath)).toBe(true);
+    expect(result.compressedSize).toBeGreaterThan(0);
+    expect(result.originalSize).toBe(Buffer.byteLength(content));
 
-  it('handles zero original size without division error', () => {
-    const result = formatCompressionResult(0, 0, '/tmp/empty.env.gz');
-    expect(result).toContain('0.0% reduction');
+    const restored = path.join(dir, "restored.env.gpg");
+    const dest = await decompressFile(result.compressedPath, restored);
+    expect(dest).toBe(restored);
+    expect(fs.readFileSync(restored, "utf8")).toBe(content);
+
+    fs.rmSync(dir, { recursive: true });
   });
 });
