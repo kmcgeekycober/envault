@@ -16,6 +16,13 @@ function makeProgram(dir: string) {
   return program;
 }
 
+/** Returns the parsed contents of pins.json in the given directory, or null if it does not exist. */
+function readPins(dir: string): any[] | null {
+  const pinsFile = path.join(dir, 'pins.json');
+  if (!fs.existsSync(pinsFile)) return null;
+  return JSON.parse(fs.readFileSync(pinsFile, 'utf8'));
+}
+
 describe('pinCommand', () => {
   let tmpDir: string;
 
@@ -25,10 +32,9 @@ describe('pinCommand', () => {
   it('adds a pin', async () => {
     const program = makeProgram(tmpDir);
     await program.parseAsync(['node', 'envault', 'pin', 'add', 'mykey', '--file', '.env']);
-    const pinsFile = path.join(tmpDir, 'pins.json');
-    expect(fs.existsSync(pinsFile)).toBe(true);
-    const data = JSON.parse(fs.readFileSync(pinsFile, 'utf8'));
-    expect(data.some((p: any) => p.key === 'mykey')).toBe(true);
+    const data = readPins(tmpDir);
+    expect(data).not.toBeNull();
+    expect(data!.some((p: any) => p.key === 'mykey')).toBe(true);
   });
 
   it('lists pins', async () => {
@@ -46,8 +52,8 @@ describe('pinCommand', () => {
     const program = makeProgram(tmpDir);
     await program.parseAsync(['node', 'envault', 'pin', 'add', 'mykey', '--file', '.env']);
     await program.parseAsync(['node', 'envault', 'pin', 'remove', 'mykey']);
-    const pinsFile = path.join(tmpDir, 'pins.json');
-    const data = JSON.parse(fs.readFileSync(pinsFile, 'utf8'));
-    expect(data.some((p: any) => p.key === 'mykey')).toBe(false);
+    const data = readPins(tmpDir);
+    expect(data).not.toBeNull();
+    expect(data!.some((p: any) => p.key === 'mykey')).toBe(false);
   });
 });
