@@ -63,3 +63,16 @@ export function formatDiff(diff: DiffResult): string {
 export function isDiffEmpty(diff: DiffResult): boolean {
   return diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0;
 }
+
+/**
+ * Returns a summary of the diff as a human-readable string.
+ * Example: "2 added, 1 removed, 3 changed"
+ */
+export function summarizeDiff(diff: DiffResult): string {
+  if (isDiffEmpty(diff)) return 'no changes';
+  const parts: string[] = [];
+  if (diff.added.length > 0) parts.push(`${diff.added.length} added`);
+  if (diff.removed.length > 0) parts.push(`${diff.removed.length} removed`);
+  if (diff.changed.length > 0) parts.push(`${diff.changed.length} changed`);
+  return parts.join(', ');
+}
