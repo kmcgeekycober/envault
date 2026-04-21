@@ -31,6 +31,12 @@ describe('lock', () => {
     expect(entry.file).toContain('.env');
   });
 
+  it('acquireLock sets lockedAt to a valid ISO date string', async () => {
+    const entry = await acquireLock(path.join(tmpDir, '.env'), 'bob');
+    expect(() => new Date(entry.lockedAt)).not.toThrow();
+    expect(new Date(entry.lockedAt).toISOString()).toBe(entry.lockedAt);
+  });
+
   it('readLock returns null when no lock exists', async () => {
     const result = await readLock(path.join(tmpDir, '.env'));
     expect(result).toBeNull();
@@ -50,6 +56,11 @@ describe('lock', () => {
     await releaseLock(envFile);
     const result = await readLock(envFile);
     expect(result).toBeNull();
+  });
+
+  it('releaseLock does not throw when no lock exists', async () => {
+    const envFile = path.join(tmpDir, '.env');
+    await expect(releaseLock(envFile)).resolves.not.toThrow();
   });
 
   it('formatLock returns a readable string', () => {
