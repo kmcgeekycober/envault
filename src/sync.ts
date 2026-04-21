@@ -66,6 +66,21 @@ export function getGitUser(): string {
 }
 
 /**
+ * Reads and parses the metadata file for a given encrypted env file.
+ * Returns null if the meta file does not exist.
+ */
+function readMeta(metaFile: string): { timestamp: number; pushedBy?: string } | null {
+  if (!fs.existsSync(metaFile)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
+  } catch {
+    throw new Error(`Failed to parse metadata file: ${metaFile}`);
+  }
+}
+
+/**
  * Returns sync status without modifying any files.
  * Compares local env file mtime against the pushed metadata timestamp.
  */
@@ -77,9 +92,7 @@ export function getSyncStatus(envFile: string = '.env'): SyncResult {
     throw new Error(`Encrypted file not found: ${encryptedFile}`);
   }
 
-  const meta = fs.existsSync(metaFile)
-    ? JSON.parse(fs.readFileSync(metaFile, 'utf-8'))
-    : { timestamp: 0 };
+  const meta = readMeta(metaFile) ?? { timestamp: 0 };
 
   if (!fs.existsSync(envFile)) {
     return { status: 'pulled', file: envFile, timestamp: meta.timestamp };
