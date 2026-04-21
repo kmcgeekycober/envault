@@ -65,6 +65,12 @@ export function mergeEnvFilePaths(
   incomingPath: string,
   strategy: MergeStrategy = "ours"
 ): MergeResult {
+  if (!fs.existsSync(basePath)) {
+    throw new Error(`Base env file not found: ${basePath}`);
+  }
+  if (!fs.existsSync(incomingPath)) {
+    throw new Error(`Incoming env file not found: ${incomingPath}`);
+  }
   const baseContent = fs.readFileSync(basePath, "utf-8");
   const incomingContent = fs.readFileSync(incomingPath, "utf-8");
   const base = parseEnvFile(baseContent);
