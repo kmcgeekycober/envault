@@ -1,88 +1,78 @@
 import * as fs from "fs";
 import * as path from "path";
-import { parseEnvEntries } from "./env";
-import { loadSchema } from "./schema";
-import { loadTtlConfig, isTtlExpired } from "./ttl";
-import { loadPins } from "./pin";
-
-export interface EnvStatusEntry {
-  key: string;
-  hasValue: boolean;
-  isRequired: boolean;
-  isTtlExpired: boolean;
-  isPinned: boolean;
-  ttlExpiresAt?: string;
-}
+import { loadConfig } from "./vault";
+import { getSyncStatus } from "./sync";
+import { checkTtlExpiry } from "./ttlMiddleware";
+import { loadTtlConfig } from "./ttl";
 
 export interface EnvStatusResult {
   file: string;
-  entries: EnvStatusEntry[];
-  totalKeys: number;
-  missingRequired: number;
-  expiredTtl: number;
-  pinnedKeys: number;
+  exists: boolean;
+  encryptedExists: boolean;
+  recipients: string[];
+  syncStatus: "in-sync" | "out-of-sync" | "unknown";
+  ttlExpired: boolean;
+  ttlExpiresAt: string | null;
+  lastModified: string | null;
+  sizeBytes: number | null;
 }
 
-export async function getEnvStatus(
+export async function formatEnvStatus(
   envFile: string,
-  configDir: string = ".envault"
+  vaultDir: string
 ): Promise<EnvStatusResult> {
-  const content = fs.existsSync(envFile)
-    ? fs.readFileSync(envFile, "utf8")
-    : "";
-  const entries = parseEnvEntries(content);
-  const schema = await loadSchema(configDir).catch(() => ({ fields: {} }));
-  const ttlConfig = await loadTtlConfig(configDir).catch(() => ({ ttls: {} }));
-  const pins = await loadPins(configDir).catch(() => ({ keys: [] }));
+  const exists = fs.existsSync(envFile);
+  const encryptedPath = path.join(vaultDir, path.basename(envFile) + ".gpg");
+  const encryptedExists = fs.existsSync(encryptedPath);
 
-  const pinnedSet = new Set<string>(pins.keys ?? []);
-  const schemaFields = schema.fields ?? {};
-  const ttls = ttlConfig.ttls ?? {};
+  let recipients: string[] = [];
+  let syncStatus: "in-sync" | "out-of-sync" | "unknown" = "unknown";
+  let lastModified: string | null = null;
+  let sizeBytes: number | null = null;
 
-  const statusEntries: EnvStatusEntry[] = entries.map((entry) => {
-    const field = schemaFields[entry.key];
-    const ttlEntry = ttls[entry.key];
-    const expired = ttlEntry ? isTtlExpired(ttlEntry) : false;
-    return {
-      key: entry.key,
-      hasValue: entry.value !== undefined && entry.value !== "",
-      isRequired: field?.required === true,
-      isTtlExpired: expired,
-      isPinned: pinnedSet.has(entry.key),
-      ttlExpiresAt: ttlEntry?.expiresAt,
-    };
-  });
+  try {
+    const config = await loadConfig(vaultDir);
+    recipients = config.recipients ?? [];
+  } catch {
+    recipients = [];
+  }
 
-  const missingRequired = statusEntries.filter(
-    (e) => e.isRequired && !e.hasValue
-  ).length;
-  const expiredTtl = statusEntries.filter((e) => e.isTtlExpired).length;
-  const pinnedKeys = statusEntries.filter((e) => e.isPinned).length;
+  if (exists) {
+    const stat = fs.statSync(envFile);
+    lastModified = stat.mtime.toISOString();
+    sizeBytes = stat.size;
+  }
+
+  try {
+    const status = await getSyncStatus(envFile, vaultDir);
+    syncStatus = status.inSync ? "in-sync" : "out-of-sync";
+  } catch {
+    syncStatus = "unknown";
+  }
+
+  let ttlExpired = false;
+  let ttlExpiresAt: string | null = null;
+  try {
+    const ttlConfig = await loadTtlConfig(vaultDir);
+    const key = path.basename(envFile);
+    const entry = ttlConfig[key];
+    if (entry) {
+      ttlExpiresAt = entry.expiresAt;
+      ttlExpired = checkTtlExpiry(entry.expiresAt);
+    }
+  } catch {
+    ttlExpired = false;
+  }
 
   return {
-    file: path.resolve(envFile),
-    entries: statusEntries,
-    totalKeys: statusEntries.length,
-    missingRequired,
-    expiredTtl,
-    pinnedKeys,
+    file: envFile,
+    exists,
+    encryptedExists,
+    recipients,
+    syncStatus,
+    ttlExpired,
+    ttlExpiresAt,
+    lastModified,
+    sizeBytes,
   };
-}
-
-export function formatEnvStatus(result: EnvStatusResult): string {
-  const lines: string[] = [
-    `Status for: ${result.file}`,
-    `Total keys: ${result.totalKeys} | Missing required: ${result.missingRequired} | Expired TTL: ${result.expiredTtl} | Pinned: ${result.pinnedKeys}`,
-    "",
-  ];
-  for (const entry of result.entries) {
-    const flags: string[] = [];
-    if (entry.isRequired && !entry.hasValue) flags.push("MISSING");
-    if (entry.isTtlExpired) flags.push("EXPIRED");
-    if (entry.isPinned) flags.push("PINNED");
-    const flagStr = flags.length > 0 ? `  [${flags.join(", ")}]` : "";
-    const valueStr = entry.hasValue ? "set" : "empty";
-    lines.push(`  ${entry.key}: ${valueStr}${flagStr}`);
-  }
-  return lines.join("\n");
 }

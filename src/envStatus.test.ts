@@ -1,87 +1,85 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { getEnvStatus, formatEnvStatus } from "./envStatus";
+import { formatEnvStatus } from "./envStatus";
+import { jest } from "@jest/globals";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "envault-status-"));
 }
 
-describe("getEnvStatus", () => {
-  it("returns status for a simple env file", async () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, ".env");
-    fs.writeFileSync(envFile, "FOO=bar\nBAR=\n");
-    const result = await getEnvStatus(envFile, dir);
-    expect(result.totalKeys).toBe(2);
-    expect(result.missingRequired).toBe(0);
-    expect(result.expiredTtl).toBe(0);
-    const foo = result.entries.find((e) => e.key === "FOO");
-    expect(foo?.hasValue).toBe(true);
-    const bar = result.entries.find((e) => e.key === "BAR");
-    expect(bar?.hasValue).toBe(false);
-  });
+function writeEnv(dir: string, name: string, content: string): string {
+  const filePath = path.join(dir, name);
+  fs.writeFileSync(filePath, content, "utf-8");
+  return filePath;
+}
 
-  it("returns empty result for missing env file", async () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, ".env");
-    const result = await getEnvStatus(envFile, dir);
-    expect(result.totalKeys).toBe(0);
-    expect(result.entries).toHaveLength(0);
-  });
+jest.mock("./vault", () => ({
+  loadConfig: jest.fn().mockResolvedValue({ recipients: ["alice@example.com"] }),
+}));
 
-  it("marks required keys from schema", async () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, ".env");
-    fs.writeFileSync(envFile, "SECRET=\n");
-    const schemaPath = path.join(dir, "schema.json");
-    fs.writeFileSync(
-      schemaPath,
-      JSON.stringify({ fields: { SECRET: { required: true, type: "string" } } })
-    );
-    const result = await getEnvStatus(envFile, dir);
-    expect(result.missingRequired).toBe(1);
-    const secret = result.entries.find((e) => e.key === "SECRET");
-    expect(secret?.isRequired).toBe(true);
-    expect(secret?.hasValue).toBe(false);
-  });
+jest.mock("./sync", () => ({
+  getSyncStatus: jest.fn().mockResolvedValue({ inSync: true }),
+}));
 
-  it("marks pinned keys", async () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, ".env");
-    fs.writeFileSync(envFile, "API_KEY=abc\n");
-    const pinsPath = path.join(dir, "pins.json");
-    fs.writeFileSync(pinsPath, JSON.stringify({ keys: ["API_KEY"] }));
-    const result = await getEnvStatus(envFile, dir);
-    expect(result.pinnedKeys).toBe(1);
-    const apiKey = result.entries.find((e) => e.key === "API_KEY");
-    expect(apiKey?.isPinned).toBe(true);
-  });
-});
+jest.mock("./ttl", () => ({
+  loadTtlConfig: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock("./ttlMiddleware", () => ({
+  checkTtlExpiry: jest.fn().mockReturnValue(false),
+}));
 
 describe("formatEnvStatus", () => {
-  it("formats status output with flags", async () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, ".env");
-    fs.writeFileSync(envFile, "FOO=bar\n");
-    const result = await getEnvStatus(envFile, dir);
-    const output = formatEnvStatus(result);
-    expect(output).toContain("Status for:");
-    expect(output).toContain("Total keys: 1");
-    expect(output).toContain("FOO: set");
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
   });
 
-  it("shows MISSING flag for empty required keys", async () => {
-    const dir = makeTmpDir();
-    const envFile = path.join(dir, ".env");
-    fs.writeFileSync(envFile, "DB_URL=\n");
-    const schemaPath = path.join(dir, "schema.json");
-    fs.writeFileSync(
-      schemaPath,
-      JSON.stringify({ fields: { DB_URL: { required: true, type: "string" } } })
-    );
-    const result = await getEnvStatus(envFile, dir);
-    const output = formatEnvStatus(result);
-    expect(output).toContain("MISSING");
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns exists=true when env file is present", async () => {
+    const envFile = writeEnv(tmpDir, ".env", "KEY=value\n");
+    const result = await formatEnvStatus(envFile, tmpDir);
+    expect(result.exists).toBe(true);
+    expect(result.sizeBytes).toBeGreaterThan(0);
+    expect(result.lastModified).not.toBeNull();
+  });
+
+  it("returns exists=false when env file is missing", async () => {
+    const envFile = path.join(tmpDir, ".env.missing");
+    const result = await formatEnvStatus(envFile, tmpDir);
+    expect(result.exists).toBe(false);
+    expect(result.sizeBytes).toBeNull();
+    expect(result.lastModified).toBeNull();
+  });
+
+  it("detects encrypted file when .gpg copy exists", async () => {
+    const envFile = writeEnv(tmpDir, ".env", "A=1\n");
+    fs.writeFileSync(envFile + ".gpg", "encrypted", "utf-8");
+    const result = await formatEnvStatus(envFile, tmpDir);
+    expect(result.encryptedExists).toBe(true);
+  });
+
+  it("reports recipients from vault config", async () => {
+    const envFile = writeEnv(tmpDir, ".env", "B=2\n");
+    const result = await formatEnvStatus(envFile, tmpDir);
+    expect(result.recipients).toEqual(["alice@example.com"]);
+  });
+
+  it("reports syncStatus as in-sync", async () => {
+    const envFile = writeEnv(tmpDir, ".env", "C=3\n");
+    const result = await formatEnvStatus(envFile, tmpDir);
+    expect(result.syncStatus).toBe("in-sync");
+  });
+
+  it("reports ttlExpired=false when no TTL entry exists", async () => {
+    const envFile = writeEnv(tmpDir, ".env", "D=4\n");
+    const result = await formatEnvStatus(envFile, tmpDir);
+    expect(result.ttlExpired).toBe(false);
+    expect(result.ttlExpiresAt).toBeNull();
   });
 });
