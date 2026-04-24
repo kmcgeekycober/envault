@@ -28,7 +28,12 @@ export function getQuotaConfigPath(dir: string): string {
 export function loadQuotaConfig(dir: string): QuotaConfig {
   const p = getQuotaConfigPath(dir);
   if (!fs.existsSync(p)) return { ...DEFAULT_QUOTA };
-  return { ...DEFAULT_QUOTA, ...JSON.parse(fs.readFileSync(p, "utf8")) };
+  try {
+    const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+    return { ...DEFAULT_QUOTA, ...raw };
+  } catch (err) {
+    throw new Error(`Failed to parse quota config at '${p}': ${(err as Error).message}`);
+  }
 }
 
 export function saveQuotaConfig(dir: string, config: QuotaConfig): void {
