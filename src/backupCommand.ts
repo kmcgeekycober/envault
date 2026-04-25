@@ -46,7 +46,7 @@ export function registerBackupCommands(program: Command): void {
         const backups = await listBackups(abs);
         const idx = parseInt(index, 10);
         if (isNaN(idx) || idx < 0 || idx >= backups.length) {
-          console.error(`Invalid index: ${index}`);
+          console.error(`Invalid index: ${index}. Valid range is 0-${backups.length - 1}.`);
           process.exit(1);
         }
         await restoreBackup(backups[idx], abs);
@@ -55,5 +55,14 @@ export function registerBackupCommands(program: Command): void {
         console.error(`Error restoring backup: ${err.message}`);
         process.exit(1);
       }
+    });
+
+  backup
+    .command('dir <envFile>')
+    .description('Show the backup directory for an env file')
+    .action((envFile: string) => {
+      const abs = path.resolve(envFile);
+      const dir = getBackupDir(abs);
+      console.log(`Backup directory: ${dir}`);
     });
 }
