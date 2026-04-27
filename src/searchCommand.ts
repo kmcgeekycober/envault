@@ -11,6 +11,11 @@ export function registerSearchCommands(program: Command): void {
     .option('-i, --ignore-case', 'case-insensitive search')
     .action(async (query: string, opts) => {
       try {
+        if (!query || query.trim().length === 0) {
+          console.error('Search query must not be empty.');
+          process.exit(1);
+        }
+
         const config = await loadConfig();
         const filePath = opts.file ?? config.encryptedFile ?? '.env.vault';
 
@@ -29,7 +34,11 @@ export function registerSearchCommands(program: Command): void {
           console.log(formatSearchResults(results, query));
         }
       } catch (err: any) {
-        console.error('Search failed:', err.message);
+        if (err.code === 'ENOENT') {
+          console.error(`Search failed: encrypted file not found. Run 'envault encrypt' first or specify a file with --file.`);
+        } else {
+          console.error('Search failed:', err.message);
+        }
         process.exit(1);
       }
     });
